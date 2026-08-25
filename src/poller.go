@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -206,37 +207,62 @@ func probeNode(p *pool, name string, cfg NodeConfig, byID map[string]VastInstanc
 		return
 	}
 
-	point := &HistoryPoint{
-		Reachable:   true,
-		EngineUp:    res.Port != nil,
-		Model:       res.Model,
-		Engine:      res.Engine,
-		TTFTS:       derefF(res.TTFTS),
-		DecodeTokS:  derefF(res.DecodeTokS),
-		PrefillTokS: derefF(res.PrefillTokS),
-		KVTokens:    derefF(res.KVTokens),
-		KVUsage:     derefF(res.KVUsage),
-		Running:     derefF(res.NumRunning),
-		Queue:       derefF(res.Queue),
-		CacheHit:    derefF(res.CacheHit),
-		RequestsTotal: derefF(res.RequestsTotal),
-		PromptTokensTotal: derefF(res.PromptTokensTotal),
-		GenTokensTotal: derefF(res.GenTokensTotal),
-		ProbeTokens: res.ProbeTokens,
-		Status:      "ok",
+	// Multi-engine: one node row per live engine. If only one engine exists,
+	// keep the configured node name (G/F/I); extra engines get ":port" suffix.
+	engines := res.Engines
+	if len(engines) == 0 {
+		p.setNodeResult(name, &HistoryPoint{
+			Reachable: true,
+			EngineUp:  false,
+			Status:    "no_engine",
+			Model:     "engine không tìm thấy trên các port 18000/30000/8000/18080/8001",
+		}, vastMapIf(hasVast, &inst))
+		hostLog("warn", "no engine found", map[string]any{"node": name})
+		return
 	}
-	if !point.EngineUp {
-		point.Status = "no_engine"
+
+	vast := vastMapIf(hasVast, &inst)
+	for i := range engines {
+		e := &engines[i]
+		engineName := name
+		if i > 0 || len(engines) > 1 {
+			engineName = fmt.Sprintf("%s:%d", name, e.Port)
+		}
+		point := &HistoryPoint{
+			Reachable:   true,
+			EngineUp:    true,
+			Model:       e.Model,
+			Engine:      e.Engine,
+			TTFTS:       derefF(e.TTFTS),
+			DecodeTokS:  derefF(e.DecodeTokS),
+			PrefillTokS: derefF(e.PrefillTokS),
+			KVTokens:    derefF(e.KVTokens),
+			KVUsage:     derefF(e.KVUsage),
+			Running:     derefF(e.NumRunning),
+			Queue:       derefF(e.Queue),
+			CacheHit:    derefF(e.CacheHit),
+			RequestsTotal:     derefF(e.RequestsTotal),
+			PromptTokensTotal: derefF(e.PromptTokensTotal),
+			GenTokensTotal:    derefF(e.GenTokensTotal),
+			ProbeTokens: e.ProbeTokens,
+			Status:      "ok",
+		}
+		if !point.EngineUp {
+			point.Status = "no_engine"
+		}
+		if e.ProbeError != "" {
+			point.Status = "probe_error"
+		}
+		if _, ok := p.nodes[engineName]; !ok {
+			p.nodes[engineName] = &NodeState{}
+		}
+		p.setNodeResult(engineName, point, vast)
+		hostLog("info", "probe ok", map[string]any{
+			"node": engineName, "model": e.Model, "engine": e.Engine, "port": e.Port,
+			"tok_s": point.DecodeTokS, "prefill_s": point.PrefillTokS, "ttft_s": point.TTFTS,
+			"running": point.Running, "queue": point.Queue,
+		})
 	}
-	if res.ProbeError != "" {
-		point.Status = "probe_error"
-	}
-	p.setNodeResult(name, point, vastMapIf(hasVast, &inst))
-	hostLog("info", "probe ok", map[string]any{
-		"node": name, "model": res.Model, "engine": res.Engine,
-		"tok_s": point.DecodeTokS, "prefill_s": point.PrefillTokS, "ttft_s": point.TTFTS,
-		"running": point.Running, "queue": point.Queue,
-	})
 }
 
 func vastMap(inst *VastInstance) map[string]any {

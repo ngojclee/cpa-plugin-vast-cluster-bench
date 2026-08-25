@@ -4,7 +4,7 @@ set -e
 SRC="/d/Python/projects/CPA Plugin/cpa-plugin-vast-cluster-bench"
 TARGET_HOST=10.21.1.1
 KEY="$HOME/.codex/secrets/ssh/10.21.1.1_ed25519"
-VERSION=0.1.9
+VERSION=0.2.0
 
 echo "=== 1. stream source into CT101 ==="
 ssh -o BatchMode=yes -i "$KEY" root@$TARGET_HOST "pct exec 101 -- rm -rf /tmp/vcb-src; pct exec 101 -- mkdir -p /tmp/vcb-src/src"

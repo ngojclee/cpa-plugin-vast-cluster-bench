@@ -12,10 +12,14 @@ import (
 )
 
 // remoteProbeScript is executed on each Vast node over SSH (python3 -c).
-// It auto-detects the LLM engine port, API key from the running server
-// cmdline, measures TTFT + decode throughput with a real streaming request,
-// reads KV/cache metrics, and samples per-GPU telemetry. It prints one JSON
-// object on stdout, prefixed with "PROBE_JSON=".
+// It scans ALL candidate LLM engine ports, measures each engine's TTFT,
+// prefill + decode throughput with real requests, reads KV/cache metrics,
+// and samples per-GPU telemetry once. Output: one JSON object on stdout
+// prefixed with "PROBE_JSON=".
+//
+// Multi-engine support: a machine running both vLLM and SGLang (or two
+// servers on different ports) yields one entry per engine. Shared host
+// telemetry (GPU) is emitted once.
 const remoteProbeScript = `
 import json, os, re, subprocess, time, urllib.request
 
@@ -56,78 +60,85 @@ def key_candidates():
     cands.append(None)
     return cands
 
-out = {"port": None, "model": None, "engine": None, "auth": None}
-CB_KEY = None
-for p in (18000, 30000, 8000, 18080, 8001):
+def mval(lines, *pats):
+    for line in lines:
+        parts = line.rsplit(" ", 1)
+        if len(parts) != 2:
+            continue
+        name = parts[0].split("{")[0]
+        for pat in pats:
+            if pat in name:
+                try:
+                    return float(parts[1])
+                except Exception:
+                    pass
+    return None
+
+def probe_engine(p, key):
+    try:
+        m = get("http://127.0.0.1:%d/v1/models" % p, timeout=4, key=key)
+        d = json.loads(m)
+        models = d.get("data") or []
+        if not models:
+            return None
+        e = {
+            "port": p,
+            "model": models[0].get("id") or models[0].get("name"),
+            "engine": None,
+            "auth": "key" if key else "none",
+        }
+        try:
+            m = get("http://127.0.0.1:%d/metrics" % p, timeout=8, key=key)
+            lines = [l for l in m.splitlines() if l and not l.startswith("#")]
+            if "sglang" in m:
+                e["engine"] = "sglang"
+                e["kv_cache_tokens"] = mval(lines, "kv_cache_pool_tokens", "num_gpu_blocks")
+                e["kv_usage"] = mval(lines, "token_usage")
+                e["queue"] = mval(lines, "num_queue")
+                e["num_running"] = mval(lines, "num_running")
+                e["cache_hit"] = mval(lines, "cache_hit_rate")
+                e["requests_total"] = mval(lines, "num_total_requests", "requests_total")
+                e["prompt_tokens_total"] = mval(lines, "prompt_tokens_total")
+                e["gen_tokens_total"] = mval(lines, "generation_tokens_total")
+            else:
+                e["engine"] = "vllm"
+                e["kv_cache_tokens"] = mval(lines, "kv_cache_size_tokens")
+                e["kv_usage"] = mval(lines, "kv_cache_usage_perc")
+                e["queue"] = mval(lines, "num_requests_waiting")
+                e["num_running"] = mval(lines, "num_requests_running")
+                e["requests_total"] = mval(lines, "num_requests_total", "requests_total")
+                e["prompt_tokens_total"] = mval(lines, "num_prompt_tokens_total", "prompt_tokens_total")
+                e["gen_tokens_total"] = mval(lines, "num_generation_tokens_total", "generation_tokens_total")
+        except Exception as ex:
+            e["metrics_error"] = str(ex)[:200]
+        return e
+    except Exception:
+        return None
+
+def measure(e):
+    p = e["port"]
+    CB_KEY = None
     for key in key_candidates():
         try:
-            m = get("http://127.0.0.1:%d/v1/models" % p, timeout=4, key=key)
-            d = json.loads(m)
-            models = d.get("data") or []
-            if models:
-                out["model"] = models[0].get("id") or models[0].get("name")
-                out["port"] = p
-                CB_KEY = key
-                out["auth"] = "key" if key else "none"
-                break
+            get("http://127.0.0.1:%d/v1/models" % p, timeout=4, key=key)
+            CB_KEY = key
+            break
         except Exception:
             continue
-    if out["port"]:
-        break
-
-if out["port"]:
-    p = out["port"]
-    try:
-        m = get("http://127.0.0.1:%d/metrics" % p, timeout=8, key=CB_KEY)
-        lines = [l for l in m.splitlines() if l and not l.startswith("#")]
-        def mval(*pats):
-            for line in lines:
-                parts = line.rsplit(" ", 1)
-                if len(parts) != 2:
-                    continue
-                name = parts[0].split("{")[0]
-                for pat in pats:
-                    if pat in name:
-                        try:
-                            return float(parts[1])
-                        except Exception:
-                            pass
-            return None
-        if "sglang" in m:
-            out["engine"] = "sglang"
-            out["kv_cache_tokens"] = mval("kv_cache_pool_tokens", "num_gpu_blocks")
-            out["kv_usage"] = mval("token_usage")
-            out["queue"] = mval("num_queue")
-            out["num_running"] = mval("num_running")
-            out["cache_hit"] = mval("cache_hit_rate")
-            out["requests_total"] = mval("num_total_requests", "requests_total")
-            out["prompt_tokens_total"] = mval("prompt_tokens_total")
-            out["gen_tokens_total"] = mval("generation_tokens_total")
-        else:
-            out["engine"] = "vllm"
-            out["kv_cache_tokens"] = mval("kv_cache_size_tokens")
-            out["kv_usage"] = mval("kv_cache_usage_perc")
-            out["queue"] = mval("num_requests_waiting")
-            out["num_running"] = mval("num_requests_running")
-            out["requests_total"] = mval("num_requests_total", "requests_total")
-            out["prompt_tokens_total"] = mval("num_prompt_tokens_total", "prompt_tokens_total")
-            out["gen_tokens_total"] = mval("num_generation_tokens_total", "generation_tokens_total")
-    except Exception as e:
-        out["metrics_error"] = str(e)[:200]
-
-    # Prefill speed: one request with a long prompt, max_tokens 1.
-    payload_prefill = {
-        "model": out["model"],
-        "messages": [{"role": "user", "content": "Hãy viết lại câu sau: " + ("lorem ipsum dolor sit amet consectetur adipiscing elit. " * 60)}],
-        "max_tokens": 1,
-        "stream": False,
-        "temperature": 0.0,
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
     hdrs = {"Content-Type": "application/json"}
     if CB_KEY:
         hdrs["Authorization"] = "Bearer " + CB_KEY
+
+    # Prefill speed: one request with a long prompt, max_tokens 1.
     try:
+        payload_prefill = {
+            "model": e["model"],
+            "messages": [{"role": "user", "content": "Hãy viết lại câu sau: " + ("lorem ipsum dolor sit amet consectetur adipiscing elit. " * 60)}],
+            "max_tokens": 1,
+            "stream": False,
+            "temperature": 0.0,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
         req = urllib.request.Request(
             "http://127.0.0.1:%d/v1/chat/completions" % p,
             data=json.dumps(payload_prefill).encode(),
@@ -139,24 +150,21 @@ if out["port"]:
         total_prefill = time.time() - t0
         prompt_tokens = (body.get("usage") or {}).get("prompt_tokens") or 0
         if total_prefill > 0 and prompt_tokens > 0:
-            out["prefill_tok_s"] = round(prompt_tokens / total_prefill, 1)
-    except Exception as e:
-        out["prefill_error"] = str(e)[:200]
+            e["prefill_tok_s"] = round(prompt_tokens / total_prefill, 1)
+    except Exception as ex:
+        e["prefill_error"] = str(ex)[:200]
 
     # Real streaming request: TTFT + decode tok/s.
-    payload = {
-        "model": out["model"],
-        "messages": [{"role": "user", "content": "Say the word: probe. Then count 1,2,3."}],
-        "max_tokens": 64,
-        "stream": True,
-        "temperature": 0.0,
-        "chat_template_kwargs": {"enable_thinking": False},
-        "stream_options": {"include_usage": True},
-    }
-    hdrs = {"Content-Type": "application/json"}
-    if CB_KEY:
-        hdrs["Authorization"] = "Bearer " + CB_KEY
     try:
+        payload = {
+            "model": e["model"],
+            "messages": [{"role": "user", "content": "Say the word: probe. Then count 1,2,3."}],
+            "max_tokens": 64,
+            "stream": True,
+            "temperature": 0.0,
+            "chat_template_kwargs": {"enable_thinking": False},
+            "stream_options": {"include_usage": True},
+        }
         req = urllib.request.Request(
             "http://127.0.0.1:%d/v1/chat/completions" % p,
             data=json.dumps(payload).encode(),
@@ -186,19 +194,33 @@ if out["port"]:
                     if d.get("content") or d.get("reasoning_content"):
                         ntok += 1
         total = time.time() - t0
-        out["ttft_s"] = round(ttft, 4) if ttft is not None else None
+        e["ttft_s"] = round(ttft, 4) if ttft is not None else None
         if usage_tokens:
             ntok = usage_tokens
-        out["probe_tokens"] = int(ntok)
+        e["probe_tokens"] = int(ntok)
         if total > 0 and ttft is not None and total > ttft:
-            out["decode_tok_s"] = round(ntok / (total - ttft), 1)
+            e["decode_tok_s"] = round(ntok / (total - ttft), 1)
         else:
-            out["decode_tok_s"] = round(ntok / total, 1) if total > 0 else None
-        out["probe_total_s"] = round(total, 2)
-    except Exception as e:
-        out["probe_error"] = str(e)[:200]
+            e["decode_tok_s"] = round(ntok / total, 1) if total > 0 else None
+        e["probe_total_s"] = round(total, 2)
+    except Exception as ex:
+        e["probe_error"] = str(ex)[:200]
 
-# GPU telemetry (per-card).
+# Scan all candidate ports; each live engine becomes its own entry.
+engines = []
+for p in (18000, 30000, 8000, 18080, 8001):
+    for key in key_candidates():
+        e = probe_engine(p, key)
+        if e is not None:
+            engines.append(e)
+            break
+
+for e in engines:
+    measure(e)
+
+out = {"engines": engines, "gpus": []}
+
+# GPU telemetry (per-card, shared across engines on this host).
 gpus = []
 try:
     s = subprocess.run(
@@ -225,28 +247,33 @@ out["gpus"] = gpus
 print("PROBE_JSON=" + json.dumps(out))
 `
 
-// probeResult is the parsed remote probe output.
+// engineProbe is one detected LLM engine on a node (per port).
+type engineProbe struct {
+	Port              int      `json:"port"`
+	Model             string   `json:"model"`
+	Engine            string   `json:"engine"`
+	Auth              string   `json:"auth"`
+	KVTokens          *float64 `json:"kv_cache_tokens"`
+	KVUsage           *float64 `json:"kv_usage"`
+	Queue             *float64 `json:"queue"`
+	NumRunning        *float64 `json:"num_running"`
+	MetricsError      string   `json:"metrics_error"`
+	TTFTS             *float64 `json:"ttft_s"`
+	ProbeTokens       int      `json:"probe_tokens"`
+	DecodeTokS        *float64 `json:"decode_tok_s"`
+	PrefillTokS       *float64 `json:"prefill_tok_s"`
+	ProbeTotalS       *float64 `json:"probe_total_s"`
+	CacheHit          *float64 `json:"cache_hit"`
+	RequestsTotal     *float64 `json:"requests_total"`
+	PromptTokensTotal *float64 `json:"prompt_tokens_total"`
+	GenTokensTotal    *float64 `json:"gen_tokens_total"`
+	ProbeError        string   `json:"probe_error"`
+}
+
+// probeResult is the parsed remote probe output (multi-engine).
 type probeResult struct {
-	Port         *int           `json:"port"`
-	Model        string         `json:"model"`
-	Engine       string         `json:"engine"`
-	Auth         string         `json:"auth"`
-	KVTokens     *float64       `json:"kv_cache_tokens"`
-	KVUsage      *float64       `json:"kv_usage"`
-	Queue        *float64       `json:"queue"`
-	NumRunning   *float64       `json:"num_running"`
-	MetricsError string         `json:"metrics_error"`
-	TTFTS        *float64       `json:"ttft_s"`
-	ProbeTokens  int            `json:"probe_tokens"`
-	DecodeTokS   *float64       `json:"decode_tok_s"`
-	PrefillTokS  *float64       `json:"prefill_tok_s"`
-	ProbeTotalS  *float64       `json:"probe_total_s"`
-	CacheHit     *float64       `json:"cache_hit"`
-	RequestsTotal *float64      `json:"requests_total"`
-	PromptTokensTotal *float64  `json:"prompt_tokens_total"`
-	GenTokensTotal *float64     `json:"gen_tokens_total"`
-	ProbeError   string         `json:"probe_error"`
-	GPUs         []gpuTelemetry `json:"gpus"`
+	Engines []engineProbe  `json:"engines"`
+	GPUs    []gpuTelemetry `json:"gpus"`
 }
 
 type gpuTelemetry struct {
