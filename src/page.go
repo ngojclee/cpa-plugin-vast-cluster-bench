@@ -50,42 +50,44 @@ th { font-weight: 600; white-space: nowrap; }
 <h1>⚡ Vast Cluster Bench</h1>
 <div class="sub" id="meta">Đang tải…</div>
 
-<div class="card">
+<div class="card" id="config-card">
   <div class="toolbar">
     <button id="probe" class="primary">⚡ Probe now</button>
     <button id="refresh" title="Làm mới">⟳</button>
-    <button id="config-toggle">⚙ Cấu hình</button>
+    <button id="config-toggle">⚙ Keys &amp; Cấu hình</button>
     <span class="muted" id="keysaved"></span>
   </div>
-  <div id="error"></div>
-  <div id="content" class="muted">Đang tải dữ liệu…</div>
+  <div id="config-fields" style="display:none">
+    <div class="row">
+      <div>
+        <label>Vast API Key
+          <input type="password" id="vastkey" placeholder="••••••••" autocomplete="off">
+          <span class="hint">Để trống + Lưu = dùng env <code>VAST_API_KEY</code>.</span>
+        </label>
+      </div>
+      <div>
+        <label>SSH Private Key
+          <input type="password" id="sshkey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" autocomplete="off">
+          <span class="hint">Để trống + Lưu = dùng <code>tunnel-dir/ssh/id_ed25519</code>.</span>
+        </label>
+      </div>
+      <div>
+        <label>Management Key
+          <input type="password" id="mkey" placeholder="management key" autocomplete="off">
+          <span class="hint">Chỉ cần khi Lưu / Probe. Xem dashboard không cần.</span>
+        </label>
+      </div>
+    </div>
+    <div class="toolbar" style="margin-top:8px; margin-bottom:0">
+      <button id="savekeys" class="primary">Lưu keys</button>
+      <button id="clearkeys">Bỏ keys (dùng env/path)</button>
+    </div>
+  </div>
 </div>
 
-<div class="card" id="config-card">
-  <div class="row">
-    <div>
-      <label>Vast API Key
-        <input type="password" id="vastkey" placeholder="••••••••" autocomplete="off">
-        <span class="hint">Để trống + Lưu = dùng env <code>VAST_API_KEY</code>.</span>
-      </label>
-    </div>
-    <div>
-      <label>SSH Private Key
-        <input type="password" id="sshkey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" autocomplete="off">
-        <span class="hint">Để trống + Lưu = dùng <code>ssh-key-path</code>.</span>
-      </label>
-    </div>
-    <div>
-      <label>Management Key
-        <input type="password" id="mkey" placeholder="management key" autocomplete="off">
-        <span class="hint">Chỉ cần khi Lưu / Probe. Xem dashboard không cần.</span>
-      </label>
-    </div>
-  </div>
-  <div class="toolbar" style="margin-top:8px; margin-bottom:0">
-    <button id="savekeys" class="primary">Lưu keys</button>
-    <button id="clearkeys">Bỏ keys (dùng env/path)</button>
-  </div>
+<div class="card">
+  <div id="error"></div>
+  <div id="content" class="muted">Đang tải dữ liệu…</div>
 </div>
 
 <script>
@@ -187,7 +189,10 @@ async function saveKeys(clear) {
 }
 $('#probe').addEventListener('click', probeNow);
 $('#refresh').addEventListener('click', load);
-$('#config-toggle').addEventListener('click', () => $('#config-card').classList.toggle('open'));
+$('#config-toggle').addEventListener('click', () => {
+  const el = $('#config-fields');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+});
 $('#savekeys').addEventListener('click', () => saveKeys(false));
 $('#clearkeys').addEventListener('click', () => saveKeys(true));
 load();
