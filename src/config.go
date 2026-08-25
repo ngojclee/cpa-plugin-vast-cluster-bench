@@ -47,6 +47,9 @@ func (s *Settings) SSHKey() string {
 	if s.SSHKeyPath != "" {
 		return s.SSHKeyPath
 	}
+	if p := os.Getenv("SSH_KEY_PATH"); p != "" {
+		return p
+	}
 	if p := os.Getenv("VAST_SSH_KEY_PATH"); p != "" {
 		return p
 	}

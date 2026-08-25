@@ -29,7 +29,7 @@ type VastInstance struct {
 	GPUUtil       float64        `json:"gpu_util"`
 	GPUTemp       float64        `json:"gpu_temp"`
 	StatusMsg     string         `json:"status_msg"`
-	StartDate     int64          `json:"start_date"`
+	StartDate     float64        `json:"start_date"`
 	Duration      float64        `json:"duration"`
 }
 
@@ -84,5 +84,5 @@ func (i *VastInstance) Uptime() time.Duration {
 	if i.StartDate == 0 {
 		return 0
 	}
-	return time.Since(time.Unix(i.StartDate, 0))
+	return time.Since(time.Unix(int64(i.StartDate), 0))
 }

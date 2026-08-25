@@ -45,19 +45,26 @@ plugins:
           ssh-port: 31027
 ```
 
+> **SSH path đồng bộ với vast-tunnel**: mount đúng thư mục key của tunnel
+> (`/home/Docker/vast-tunnel/ssh`) vào `/vast-ssh` trong container CPA, plugin
+> dùng chính key đó (`/vast-ssh/id_ed25519`) — một key cho cả tunnel lẫn plugin.
+
 ### 3. Docker mount + env (bắt buộc cho SSH key & Vast API)
 
 Cli-proxy-api container cần:
 
 ```yaml
 environment:
-  - VAST_API_KEY=your_vast_api_key    # hoặc điền vast-api-key trong config
+  - VAST_API_KEY=${VAST_API_KEY}              # dùng chung biến với vast-gateway
+  - SSH_KEY_PATH=/vast-ssh/id_ed25519         # đường dẫn key trong container
 volumes:
   - /home/Docker/vast-tunnel/ssh:/vast-ssh:ro   # key SSH Vast (id_ed25519)
 ```
 
-> Không bắt buộc: nếu không muốn mount key, mở dashboard → dán SSH private key
-> và Vast API key vào ô tương ứng (lưu vào state dir của plugin, 0600).
+> Không bắt buộc: nếu không muốn mount key, mở dashboard → ⚙ Cấu hình → dán SSH
+> private key và Vast API key vào ô tương ứng (lưu vào state dir của plugin, 0600).
+> **Để trống + bấm "Bỏ keys (dùng env/path)"** → plugin quay về dùng
+> `VAST_API_KEY` env và `ssh-key-path`.
 
 ### 4. Restart CPA
 
