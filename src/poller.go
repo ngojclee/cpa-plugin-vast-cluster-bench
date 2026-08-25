@@ -21,13 +21,8 @@ func startPoller() {
 
 // kickPoller asks the poller to run a probe cycle immediately.
 func kickPoller() {
-	p := currentPool()
-	if !p.markProbeStart() {
-		return
-	}
 	go func() {
-		defer p.markProbeDone()
-		probeAll()
+		probeAll() // probeAll does its own markProbeStart/Done guard
 	}()
 }
 
