@@ -31,6 +31,13 @@ type VastInstance struct {
 	StatusMsg     string         `json:"status_msg"`
 	StartDate     float64        `json:"start_date"`
 	Duration      float64        `json:"duration"`
+	ImageUUID     string         `json:"image_uuid"`
+	Onstart       string         `json:"onstart"`
+	CPUUtil       float64        `json:"cpu_util"`
+	MemUsage      float64        `json:"mem_usage"`
+	DiskUtil      float64        `json:"disk_util"`
+	DiskSpace     float64        `json:"disk_space"`
+	DiskUsage     float64        `json:"disk_usage"`
 }
 
 func (i *VastInstance) IDString() string {

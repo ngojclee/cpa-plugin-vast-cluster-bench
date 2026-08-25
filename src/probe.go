@@ -99,6 +99,7 @@ if out["port"]:
             out["kv_usage"] = mval("token_usage")
             out["queue"] = mval("num_queue")
             out["num_running"] = mval("num_running")
+            out["cache_hit"] = mval("cache_hit_rate")
         else:
             out["engine"] = "vllm"
             out["kv_cache_tokens"] = mval("kv_cache_size_tokens")
@@ -107,6 +108,34 @@ if out["port"]:
             out["num_running"] = mval("num_requests_running")
     except Exception as e:
         out["metrics_error"] = str(e)[:200]
+
+    # Prefill speed: one request with a long prompt, max_tokens 1.
+    payload_prefill = {
+        "model": out["model"],
+        "messages": [{"role": "user", "content": "Hãy viết lại câu sau: " + ("lorem ipsum dolor sit amet consectetur adipiscing elit. " * 60)}],
+        "max_tokens": 1,
+        "stream": False,
+        "temperature": 0.0,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    hdrs = {"Content-Type": "application/json"}
+    if CB_KEY:
+        hdrs["Authorization"] = "Bearer " + CB_KEY
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/v1/chat/completions" % p,
+            data=json.dumps(payload_prefill).encode(),
+            headers=hdrs,
+        )
+        t0 = time.time()
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+        total_prefill = time.time() - t0
+        prompt_tokens = (body.get("usage") or {}).get("prompt_tokens") or 0
+        if total_prefill > 0 and prompt_tokens > 0:
+            out["prefill_tok_s"] = round(prompt_tokens / total_prefill, 1)
+    except Exception as e:
+        out["prefill_error"] = str(e)[:200]
 
     # Real streaming request: TTFT + decode tok/s.
     payload = {
@@ -204,7 +233,9 @@ type probeResult struct {
 	TTFTS        *float64       `json:"ttft_s"`
 	ProbeTokens  int            `json:"probe_tokens"`
 	DecodeTokS   *float64       `json:"decode_tok_s"`
+	PrefillTokS  *float64       `json:"prefill_tok_s"`
 	ProbeTotalS  *float64       `json:"probe_total_s"`
+	CacheHit     *float64       `json:"cache_hit"`
 	ProbeError   string         `json:"probe_error"`
 	GPUs         []gpuTelemetry `json:"gpus"`
 }

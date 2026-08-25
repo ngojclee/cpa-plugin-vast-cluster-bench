@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -9,12 +10,13 @@ import (
 
 // NodeConfig describes one Vast.ai instance to benchmark.
 type NodeConfig struct {
-	Name        string `yaml:"name" json:"name"`
-	ID          string `yaml:"id" json:"id"`
-	SSHHost     string `yaml:"ssh-host" json:"ssh_host"`
-	SSHPort     int    `yaml:"ssh-port" json:"ssh_port"`
-	DirectHost  string `yaml:"direct-host" json:"direct_host"`
-	DirectPort  int    `yaml:"direct-port" json:"direct_port"`
+	Name       string `yaml:"name" json:"name"`
+	ID         string `yaml:"id" json:"id"`
+	SSHHost    string `yaml:"ssh-host" json:"ssh_host"`
+	SSHPort    int    `yaml:"ssh-port" json:"ssh_port"`
+	DirectHost string `yaml:"direct-host" json:"direct_host"`
+	DirectPort int    `yaml:"direct-port" json:"direct_port"`
+	LocalPort  int    `yaml:"-" json:"-"`
 }
 
 // Settings holds all plugin configuration.
@@ -23,6 +25,8 @@ type Settings struct {
 	VastAPIKey    string        `yaml:"vast-api-key" json:"vast_api_key"`
 	SSHKeyPath    string        `yaml:"ssh-key-path" json:"ssh_key_path"`
 	SSHUser       string        `yaml:"ssh-user" json:"ssh_user"`
+	TunnelDir     string        `yaml:"tunnel-dir" json:"tunnel_dir"`
+	HistoryDays   int           `yaml:"history-days" json:"history_days"`
 	Nodes         []NodeConfig  `yaml:"nodes" json:"nodes"`
 	AuthDir       string        `yaml:"-" json:"-"`
 
@@ -43,6 +47,22 @@ func (s *Settings) Key() string {
 	return os.Getenv("VAST_API_KEY")
 }
 
+// TunnelDirResolved returns the tunnel base directory used to auto-discover
+// instances.txt and the SSH key. Env VAST_TUNNEL_DIR wins over config.
+func (s *Settings) TunnelDirResolved() string {
+	if p := os.Getenv("VAST_TUNNEL_DIR"); p != "" {
+		return p
+	}
+	if s.TunnelDir != "" {
+		return s.TunnelDir
+	}
+	return "/vast-tunnel"
+}
+
+// SSHKey resolves the SSH private key path. Priority:
+//  1. tunnel-dir/ssh/id_ed25519 (auto-detected, matches vast-tunnel)
+//  2. env SSH_KEY_PATH / VAST_SSH_KEY_PATH
+//  3. config ssh-key-path
 func (s *Settings) SSHKey() string {
 	if s.SSHKeyPath != "" {
 		return s.SSHKeyPath
@@ -52,6 +72,10 @@ func (s *Settings) SSHKey() string {
 	}
 	if p := os.Getenv("VAST_SSH_KEY_PATH"); p != "" {
 		return p
+	}
+	auto := filepath.Join(s.TunnelDirResolved(), "ssh", "id_ed25519")
+	if fi, err := os.Stat(auto); err == nil && !fi.IsDir() {
+		return auto
 	}
 	return "/vast-ssh/id_ed25519"
 }
@@ -70,6 +94,7 @@ func decodeSettings(configYAML []byte) Settings {
 	out := Settings{
 		ProbeInterval: "5m",
 		SSHUser:       "root",
+		HistoryDays:   7,
 	}
 	if len(configYAML) == 0 {
 		return out
@@ -92,6 +117,9 @@ func decodeSettings(configYAML []byte) Settings {
 		if d, errParse := time.ParseDuration(out.ProbeInterval); errParse == nil {
 			out.interval = d
 		}
+	}
+	if out.HistoryDays <= 0 {
+		out.HistoryDays = 7
 	}
 	return out
 }

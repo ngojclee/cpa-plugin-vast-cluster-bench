@@ -18,10 +18,12 @@ type HistoryPoint struct {
 	Engine       string  `json:"engine"`
 	TTFTS        float64 `json:"ttft_s,omitempty"`
 	DecodeTokS   float64 `json:"decode_tok_s,omitempty"`
+	PrefillTokS  float64 `json:"prefill_tok_s,omitempty"`
 	KVTokens     float64 `json:"kv_cache_tokens,omitempty"`
 	KVUsage      float64 `json:"kv_usage,omitempty"`
 	Running      float64 `json:"running,omitempty"`
 	Queue        float64 `json:"queue,omitempty"`
+	CacheHit     float64 `json:"cache_hit,omitempty"`
 	ProbeTokens  int     `json:"probe_tokens,omitempty"`
 	Status       string  `json:"status"`
 	PriceH       float64 `json:"price_h,omitempty"`
@@ -137,6 +139,50 @@ func (p *pool) historyFor(name string) []HistoryPoint {
 	out := make([]HistoryPoint, len(st.history))
 	copy(out, st.history)
 	return out
+}
+
+// pruneHistory removes probe readings older than history-days (default 7).
+// Called at the end of every probe cycle; logs how many points were dropped
+// so retention is observable in CPA logs.
+func (p *pool) pruneHistory() {
+	p.mu.Lock()
+	days := p.cfg.HistoryDays
+	if days <= 0 {
+		days = 7
+	}
+	p.mu.Unlock()
+
+	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
+	total := 0
+
+	p.mu.Lock()
+	for name, st := range p.nodes {
+		st.mu.Lock()
+		if len(st.history) == 0 {
+			st.mu.Unlock()
+			continue
+		}
+		kept := st.history[:0]
+		dropped := 0
+		for _, pt := range st.history {
+			if pt.TS > 0 && pt.TS < cutoff {
+				dropped++
+				continue
+			}
+			kept = append(kept, pt)
+		}
+		st.history = kept
+		total += dropped
+		st.mu.Unlock()
+		if dropped > 0 {
+			hostLog("info", "history pruned", map[string]any{"node": name, "dropped": dropped, "days": days})
+		}
+	}
+	p.mu.Unlock()
+
+	if total > 0 {
+		hostLog("info", "history retention applied", map[string]any{"total_dropped": total, "days": days})
+	}
 }
 
 func (p *pool) markProbeStart() bool {
@@ -273,6 +319,8 @@ func buildSettings() map[string]any {
 	return map[string]any{
 		"version":              pluginVersion,
 		"probe_interval":       p.cfg.ProbeInterval,
+		"history_days":         p.cfg.HistoryDays,
+		"tunnel_dir":           p.cfg.TunnelDirResolved(),
 		"ssh_key_path":         p.cfg.SSHKey(),
 		"ssh_user":             p.cfg.User(),
 		"vast_api_key_env":     os.Getenv("VAST_API_KEY") != "",

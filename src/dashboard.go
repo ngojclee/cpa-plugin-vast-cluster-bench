@@ -30,23 +30,25 @@ func htmlResponse(body string) ([]byte, error) {
 }
 
 type nodeStatus struct {
-	Name       string         `json:"name"`
-	Reachable  bool           `json:"reachable"`
-	EngineUp   bool           `json:"engine_up"`
-	Status     string         `json:"status"`
-	Model      string         `json:"model"`
-	Engine     string         `json:"engine"`
-	TTFTS      float64        `json:"ttft_s"`
-	DecodeTokS float64        `json:"decode_tok_s"`
-	KVTokens   float64        `json:"kv_cache_tokens"`
-	KVUsage    float64        `json:"kv_usage"`
-	Running    float64        `json:"running"`
-	Queue      float64        `json:"queue"`
-	ProbeTokens int           `json:"probe_tokens"`
-	PriceH     float64        `json:"price_h"`
-	GPUs       []gpuTelemetry `json:"gpus"`
-	Vast       map[string]any `json:"vast,omitempty"`
-	LastSeen   string         `json:"last_seen"`
+	Name        string         `json:"name"`
+	Reachable   bool           `json:"reachable"`
+	EngineUp    bool           `json:"engine_up"`
+	Status      string         `json:"status"`
+	Model       string         `json:"model"`
+	Engine      string         `json:"engine"`
+	TTFTS       float64        `json:"ttft_s"`
+	DecodeTokS  float64        `json:"decode_tok_s"`
+	PrefillTokS float64        `json:"prefill_tok_s"`
+	KVTokens    float64        `json:"kv_cache_tokens"`
+	KVUsage     float64        `json:"kv_usage"`
+	Running     float64        `json:"running"`
+	Queue       float64        `json:"queue"`
+	CacheHit    float64        `json:"cache_hit"`
+	ProbeTokens int            `json:"probe_tokens"`
+	PriceH      float64        `json:"price_h"`
+	GPUs        []gpuTelemetry `json:"gpus"`
+	Vast        map[string]any `json:"vast,omitempty"`
+	LastSeen    string         `json:"last_seen"`
 }
 
 type clusterStatus struct {
@@ -88,10 +90,12 @@ func buildStatus() clusterStatus {
 			entry.Engine = st.last.Engine
 			entry.TTFTS = st.last.TTFTS
 			entry.DecodeTokS = st.last.DecodeTokS
+			entry.PrefillTokS = st.last.PrefillTokS
 			entry.KVTokens = st.last.KVTokens
 			entry.KVUsage = st.last.KVUsage
 			entry.Running = st.last.Running
 			entry.Queue = st.last.Queue
+			entry.CacheHit = st.last.CacheHit
 			entry.ProbeTokens = st.last.ProbeTokens
 			entry.PriceH = st.last.PriceH
 		}

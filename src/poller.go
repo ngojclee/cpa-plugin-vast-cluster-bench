@@ -50,8 +50,12 @@ func pollerLoop() {
 	}
 }
 
-// probeAll runs one probe cycle: fetch Vast instances, then probe every
-// reachable node in parallel.
+// probeAll runs one probe cycle:
+//  1. fetch Vast instances (status/price/GPU metadata)
+//  2. auto-discover nodes from the tunnel's instances.txt (if present)
+//  3. merge with configured nodes
+//  4. probe every reachable node in parallel
+//  5. prune history older than history-days
 func probeAll() {
 	p := currentPool()
 	if !p.markProbeStart() {
@@ -62,69 +66,80 @@ func probeAll() {
 	instances, errInstances := fetchVastInstances(p.effectiveKey())
 	if errInstances != nil {
 		hostLog("warn", "vast api failed", map[string]any{"error": errInstances.Error()})
-		// Keep probing configured nodes even if the API is down.
 		instances = nil
 	}
 
-	// Build node list: config nodes win by name; auto-discover the rest.
-	names := p.nodeNames()
+	// Sources of nodes, in priority order (name wins if duplicated):
+	// 1. explicit config nodes
+	// 2. tunnel instances.txt (auto-discovered)
+	// 3. Vast API instances not otherwise covered
 	configByName := make(map[string]NodeConfig)
 	for _, n := range p.cfg.Nodes {
 		configByName[n.Name] = n
 	}
 
-	// Map instance id -> instance.
+	// id -> instance metadata from Vast API.
 	byID := make(map[string]VastInstance)
 	for _, inst := range instances {
 		byID[inst.IDString()] = inst
 	}
 
-	// Union of names: configured + discovered. Use a stable unique name per
-	// instance: config name wins; otherwise template name, disambiguated by
-	// instance id when two machines share the same template name.
-	discovered := make(map[string]VastInstance)
-	usedNames := make(map[string]string) // name -> instance id
-	for name := range configByName {
-		usedNames[name] = configByName[name].ID
+	// Build final node set.
+	all := make(map[string]NodeConfig)
+	for name, cfg := range configByName {
+		all[name] = cfg
 	}
-	for _, inst := range instances {
-		base := instanceName(&inst)
-		name := base
-		if prevID, ok := usedNames[name]; ok && prevID != inst.IDString() {
-			name = base + " #" + inst.IDString()
-		}
-		usedNames[name] = inst.IDString()
-		if _, exists := configByName[name]; !exists {
-			discovered[name] = inst
-			if _, ok := p.nodes[name]; !ok {
-				p.nodes[name] = &NodeState{}
+
+	// Tunnel-discovered nodes (they carry live SSH host/port from the tunnel).
+	tunnelNodes := p.discoverTunnelNodes()
+	tunnelByName := make(map[string]NodeConfig)
+	for _, n := range tunnelNodes {
+		tunnelByName[n.Name] = n
+		if _, exists := all[n.Name]; !exists {
+			all[n.Name] = n
+			if _, ok := p.nodes[n.Name]; !ok {
+				p.nodes[n.Name] = &NodeState{}
 			}
 		}
 	}
 
-	allNames := names
-	for name := range discovered {
-		found := false
-		for _, n := range allNames {
-			if n == name {
-				found = true
-				break
-			}
+	// Vast API instances not already known (auto-discover new machines).
+	for _, inst := range instances {
+		name := instanceName(&inst)
+		if _, exists := all[name]; exists {
+			continue
 		}
-		if !found {
-			allNames = append(allNames, name)
+		// prefer tunnel endpoint if we have one for this id
+		if tc, ok := tunnelByName[name]; ok {
+			all[name] = tc
+		} else {
+			cfg := NodeConfig{Name: name, ID: inst.IDString()}
+			if inst.PublicIP != "" && inst.DirectPort > 0 {
+				cfg.SSHHost, cfg.SSHPort = inst.PublicIP, inst.DirectPort
+			} else if inst.SSHHost != "" {
+				cfg.SSHHost, cfg.SSHPort = inst.SSHHost, inst.SSHPort+1
+			}
+			all[name] = cfg
+		}
+		if _, ok := p.nodes[name]; !ok {
+			p.nodes[name] = &NodeState{}
 		}
 	}
+
+	// Keep node states for names that vanished from all sources so the
+	// dashboard still shows them as stale/offline (last known data).
 
 	var wg sync.WaitGroup
-	for _, name := range allNames {
+	for name, cfg := range all {
 		wg.Add(1)
-		go func(name string) {
+		go func(name string, cfg NodeConfig) {
 			defer wg.Done()
-			probeNode(p, name, configByName, byID, discovered)
-		}(name)
+			probeNode(p, name, cfg, byID)
+		}(name, cfg)
 	}
 	wg.Wait()
+
+	p.pruneHistory()
 }
 
 func instanceName(inst *VastInstance) string {
@@ -134,18 +149,8 @@ func instanceName(inst *VastInstance) string {
 	return inst.IDString()
 }
 
-func probeNode(p *pool, name string, configByName map[string]NodeConfig, byID map[string]VastInstance, discovered map[string]VastInstance) {
-	cfg, _ := configByName[name]
-	inst, hasVast := discovered[name]
-	if !hasVast {
-		// Maybe the config node id maps to a fetched instance.
-		if cfg.ID != "" {
-			if i, ok := byID[cfg.ID]; ok {
-				inst = i
-				hasVast = true
-			}
-		}
-	}
+func probeNode(p *pool, name string, cfg NodeConfig, byID map[string]VastInstance) {
+	inst, hasVast := byID[cfg.ID]
 
 	// Offline / exited instances: record status only, no probe.
 	if hasVast && !inst.IsRunning() {
@@ -160,13 +165,13 @@ func probeNode(p *pool, name string, configByName map[string]NodeConfig, byID ma
 
 	keyPath, keyPEM := p.effectiveSSHKey()
 
-	// Determine SSH endpoint: config > direct > proxy.
+	// Determine SSH endpoint: tunnel/config host/port > direct > proxy.
 	host, port := cfg.SSHHost, cfg.SSHPort
 	if host == "" && hasVast {
 		if inst.PublicIP != "" && inst.DirectPort > 0 {
 			host, port = inst.PublicIP, inst.DirectPort
 		} else if inst.SSHHost != "" {
-			host, port = inst.SSHHost, inst.SSHPort+1 // Vast proxy port is ssh_port+1
+			host, port = inst.SSHHost, inst.SSHPort+1
 		}
 	}
 
@@ -183,18 +188,20 @@ func probeNode(p *pool, name string, configByName map[string]NodeConfig, byID ma
 	}
 
 	point := &HistoryPoint{
-		Reachable:  true,
-		EngineUp:   res.Port != nil,
-		Model:      res.Model,
-		Engine:     res.Engine,
-		TTFTS:      derefF(res.TTFTS),
-		DecodeTokS: derefF(res.DecodeTokS),
-		KVTokens:   derefF(res.KVTokens),
-		KVUsage:    derefF(res.KVUsage),
-		Running:    derefF(res.NumRunning),
-		Queue:      derefF(res.Queue),
+		Reachable:   true,
+		EngineUp:    res.Port != nil,
+		Model:       res.Model,
+		Engine:      res.Engine,
+		TTFTS:       derefF(res.TTFTS),
+		DecodeTokS:  derefF(res.DecodeTokS),
+		PrefillTokS: derefF(res.PrefillTokS),
+		KVTokens:    derefF(res.KVTokens),
+		KVUsage:     derefF(res.KVUsage),
+		Running:     derefF(res.NumRunning),
+		Queue:       derefF(res.Queue),
+		CacheHit:    derefF(res.CacheHit),
 		ProbeTokens: res.ProbeTokens,
-		Status:     "ok",
+		Status:      "ok",
 	}
 	if !point.EngineUp {
 		point.Status = "no_engine"
@@ -205,7 +212,7 @@ func probeNode(p *pool, name string, configByName map[string]NodeConfig, byID ma
 	p.setNodeResult(name, point, vastMapIf(hasVast, &inst))
 	hostLog("info", "probe ok", map[string]any{
 		"node": name, "model": res.Model, "engine": res.Engine,
-		"tok_s": point.DecodeTokS, "ttft_s": point.TTFTS,
+		"tok_s": point.DecodeTokS, "prefill_s": point.PrefillTokS, "ttft_s": point.TTFTS,
 		"running": point.Running, "queue": point.Queue,
 	})
 }
@@ -233,6 +240,13 @@ func vastMapIf(ok bool, inst *VastInstance) map[string]any {
 		"cpu_name":      inst.CPUName,
 		"cpu_ram":       inst.CPURAM,
 		"template":      inst.TemplateName,
+		"image":         inst.ImageUUID,
+		"onstart":       inst.Onstart,
+		"cpu_util":      inst.CPUUtil,
+		"mem_usage":     inst.MemUsage,
+		"disk_util":     inst.DiskUtil,
+		"disk_space":    inst.DiskSpace,
+		"disk_usage":    inst.DiskUsage,
 		"status_msg":    inst.StatusMsg,
 		"uptime_s":      int64(inst.Uptime().Seconds()),
 		"gpu_util":      inst.GPUUtil,

@@ -124,20 +124,23 @@ async function load() {
   try {
     const data = await api(RES + '/data');
     $('#meta').textContent = 'v' + data.version + ' · probe ' + data.probe_interval + ' · cập nhật ' + fmtTime(data.generated_at);
-    let html = '<table><tr><th>Node</th><th>Trạng thái</th><th>Engine / Model</th><th>tok/s</th><th>TTFT</th><th>KV cache</th><th>GPU</th><th>Giá</th><th>tok/s·$/h</th><th>24h</th></tr>';
+    let html = '<table><tr><th>Node</th><th>Trạng thái</th><th>Engine / Model</th><th>tok/s</th><th>TTFT</th><th>Prefill</th><th>KV cache</th><th>GPU</th><th>Giá</th><th>24h</th></tr>';
     for (const n of data.nodes) {
+      const v = n.vast || {};
       const gpu = (n.gpus || []).map(g => '<div class="gpu">GPU' + g.idx + ' ' + g.temp_c + '°C · ' + g.w + 'W · ' + g.util_pct + '%</div>').join('');
+      const host = (v.cpu_util !== undefined ? '<div class="gpu">CPU ' + fmtNum(v.cpu_util, 0) + '% · RAM ' + fmtNum(v.mem_usage, 0) + 'G · disk ' + fmtNum(v.disk_util, 0) + '%</div>' : '');
+      const img = (v.image ? '<div class="gpu" title="' + (v.onstart || '') + '">' + v.image + '</div>' : '');
       let hist = [];
       try { hist = (await api(RES + '/history?node=' + encodeURIComponent(n.name))).points || []; } catch (e) {}
-      html += '<tr><td><b>' + n.name + '</b></td>'
-        + '<td>' + statusDot(n.status) + (n.vast && n.vast.status ? '<br><span class="muted">' + n.vast.status + '</span>' : '') + '</td>'
-        + '<td>' + (n.engine || '') + (n.model ? '<br><span class="muted">' + n.model + '</span>' : '') + '</td>'
-        + '<td><b>' + fmtNum(n.decode_tok_s, 1) + '</b></td>'
+      html += '<tr><td><b>' + n.name + '</b>' + (v.id ? '<br><span class="muted">#' + v.id + '</span>' : '') + '</td>'
+        + '<td>' + statusDot(n.status) + (v.status ? '<br><span class="muted">' + v.status + '</span>' : '') + '</td>'
+        + '<td>' + (n.engine || '') + (n.model ? '<br><span class="muted">' + n.model + '</span>' : '') + img + '</td>'
+        + '<td><b>' + fmtNum(n.decode_tok_s, 1) + '</b>' + (n.cache_hit > 0 ? '<br><span class="muted">hit ' + (n.cache_hit * 100).toFixed(0) + '%</span>' : '') + '</td>'
         + '<td>' + fmtNum(n.ttft_s * 1000, 1) + ' ms</td>'
+        + '<td>' + fmtNum(n.prefill_tok_s, 0) + ' tok/s</td>'
         + '<td>' + fmtNum(n.kv_cache_tokens / 1000, 0) + 'K · ' + usageBar(n.kv_usage) + '<br><span class="muted">run ' + fmtNum(n.running, 0) + ' · q ' + fmtNum(n.queue, 0) + '</span></td>'
-        + '<td>' + (gpu || '<span class="muted">—</span>') + '</td>'
+        + '<td>' + (gpu || '<span class="muted">—</span>') + host + '</td>'
         + '<td>' + (n.price_h ? '$' + n.price_h.toFixed(3) + '/h' : '—') + '</td>'
-        + '<td>' + (n.price_h > 0 && n.decode_tok_s > 0 ? (n.decode_tok_s / n.price_h).toFixed(0) : '—') + '</td>'
         + '<td>' + spark(hist) + '</td></tr>';
     }
     html += '</table>';
