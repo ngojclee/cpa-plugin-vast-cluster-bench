@@ -1,12 +1,13 @@
 # ================================================================
 # BỔ SUNG cho cli-proxy-api trong compose vast-cpa — phần VAST CLUSTER BENCH
 #
-# Chèn 2 mục này vào service cli-proxy-api (mục 3 trong file compose):
-#   1) environment: thêm VAST_API_KEY + SSH_KEY_PATH
-#   2) volumes: thêm mount key SSH của vast-tunnel
+# Chèn vào service cli-proxy-api (mục 3 trong file compose):
+#   1) environment: VAST_API_KEY + VAST_TUNNEL_DIR
+#   2) volumes: mount thư mục tunnel (/home/Docker/vast-tunnel)
 #
-# Lưu ý: VAST_API_KEY dùng CHUNG biến ${VAST_API_KEY} với vast-gateway
-# (đã có trong REQUIRED Portainer environment variables).
+# VAST_TUNNEL_DIR trỏ tới THƯ MỤC tunnel (không phải từng file):
+#   - instances.txt  → plugin tự quét node từ tunnel (auto-discover)
+#   - ssh/id_ed25519 → plugin tự dò key SSH dùng chung với tunnel
 # ================================================================
 
 # --- TRONG service: cli-proxy-api ---------------------------------
@@ -19,7 +20,7 @@
       CPA_CODEX_COMPACTION_KEY: "${CPA_CODEX_COMPACTION_KEY:-}"
       # >>> VAST CLUSTER BENCH (thêm 2 dòng này) <<<
       VAST_API_KEY: "${VAST_API_KEY}"
-      SSH_KEY_PATH: "/vast-ssh/id_ed25519"
+      VAST_TUNNEL_DIR: "/vast-tunnel"
 
     volumes:
       - /home/Docker/CLIProxyAPI/config.yaml:/CLIProxyAPI/config.yaml:rw
@@ -27,5 +28,6 @@
       - /home/Docker/CLIProxyAPI/plugins:/CLIProxyAPI/plugins:rw
       - /home/Docker/CLIProxyAPI/logs:/CLIProxyAPI/logs:rw
       - /home/Docker/CLIProxyAPI/opencodex:/data/opencodex:rw
-      # >>> VAST CLUSTER BENCH: dùng chung key SSH với vast-tunnel (thêm dòng này) <<<
-      - /home/Docker/vast-tunnel/ssh:/vast-ssh:ro
+      # >>> VAST CLUSTER BENCH: mount nguyên thư mục tunnel (thêm dòng này) <<<
+      #     plugin tự dò instances.txt + ssh/id_ed25519 bên trong
+      - /home/Docker/vast-tunnel:/vast-tunnel:ro

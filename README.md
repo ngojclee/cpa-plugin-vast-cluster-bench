@@ -34,20 +34,22 @@ plugins:
   configs:
     vast-cluster-bench:
       enabled: true
-      probe-interval: 5m        # mặc định 5 phút, có thể đổi 1m/10m...
-      vast-api-key: ""          # bỏ trống nếu dùng env VAST_API_KEY
-      ssh-key-path: /vast-ssh/id_ed25519   # hoặc bỏ trống + dán key trong UI
+      probe-interval: 1m        # live: 1 phút (mặc định 5m, có thể 30s/1m/10m...)
+      tunnel-dir: /vast-tunnel   # thư mục tunnel → tự dò instances.txt + key SSH
+      history-days: 7            # giữ log probe N ngày, tự dọn dẹp
+      vast-api-key: ""           # bỏ trống nếu dùng env VAST_API_KEY
       ssh-user: root
-      nodes:                    # tùy chọn: explicit list, nếu bỏ trống thì auto-discover
+      nodes:                     # tùy chọn: tên đẹp G/F/I; bỏ trống = auto-discover
         - name: G
           id: "48423380"
           ssh-host: 65.95.12.163
           ssh-port: 31027
 ```
 
-> **SSH path đồng bộ với vast-tunnel**: mount đúng thư mục key của tunnel
-> (`/home/Docker/vast-tunnel/ssh`) vào `/vast-ssh` trong container CPA, plugin
-> dùng chính key đó (`/vast-ssh/id_ed25519`) — một key cho cả tunnel lẫn plugin.
+> **Auto-discover node** (không cần khai `nodes`): plugin quét
+> `<tunnel-dir>/instances.txt` do vast-tunnel/vast-gateway ghi — máy nào có
+> tunnel là tự xuất hiện. `ssh/id_ed25519` trong tunnel-dir được dùng luôn
+> (một key cho tunnel lẫn plugin). Kết hợp Vast API để lấy giá/status/GPU.
 
 ### 3. Docker mount + env (bắt buộc cho SSH key & Vast API)
 
@@ -56,15 +58,15 @@ Cli-proxy-api container cần:
 ```yaml
 environment:
   - VAST_API_KEY=${VAST_API_KEY}              # dùng chung biến với vast-gateway
-  - SSH_KEY_PATH=/vast-ssh/id_ed25519         # đường dẫn key trong container
+  - VAST_TUNNEL_DIR=/vast-tunnel              # thư mục tunnel trong container
 volumes:
-  - /home/Docker/vast-tunnel/ssh:/vast-ssh:ro   # key SSH Vast (id_ed25519)
+  - /home/Docker/vast-tunnel:/vast-tunnel:ro  # mount nguyên thư mục tunnel
 ```
 
-> Không bắt buộc: nếu không muốn mount key, mở dashboard → ⚙ Cấu hình → dán SSH
+> Không bắt buộc: nếu không muốn mount tunnel, mở dashboard → ⚙ Cấu hình → dán SSH
 > private key và Vast API key vào ô tương ứng (lưu vào state dir của plugin, 0600).
 > **Để trống + bấm "Bỏ keys (dùng env/path)"** → plugin quay về dùng
-> `VAST_API_KEY` env và `ssh-key-path`.
+> `VAST_API_KEY` env và `tunnel-dir/ssh/id_ed25519`.
 
 ### 4. Restart CPA
 
