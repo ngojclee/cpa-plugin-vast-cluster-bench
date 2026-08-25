@@ -183,11 +183,18 @@ func (p *pool) updateSettings(body settingsUpdateBody) error {
 	if raw, errRead := os.ReadFile(settingsFilePath(dir)); errRead == nil {
 		_ = json.Unmarshal(raw, &ps)
 	}
-	if body.VastAPIKey != "" {
-		ps.VastAPIKey = body.VastAPIKey
-	}
-	if body.SSHKey != "" {
-		ps.SSHKey = body.SSHKey
+	if body.Clear {
+		// Explicit "use env / path" — drop any stored keys.
+		ps.VastAPIKey = ""
+		ps.SSHKey = ""
+	} else {
+		// Empty field = leave unchanged; non-empty = replace.
+		if body.VastAPIKey != "" {
+			ps.VastAPIKey = body.VastAPIKey
+		}
+		if body.SSHKey != "" {
+			ps.SSHKey = body.SSHKey
+		}
 	}
 	raw, errMarshal := json.MarshalIndent(ps, "", "  ")
 	if errMarshal != nil {
@@ -203,12 +210,16 @@ func (p *pool) updateSettings(body settingsUpdateBody) error {
 	p.mu.Lock()
 	if ps.VastAPIKey != "" {
 		p.uiSettings["vast_api_key"] = ps.VastAPIKey
+	} else {
+		delete(p.uiSettings, "vast_api_key")
 	}
 	if ps.SSHKey != "" {
 		p.uiSettings["ssh_key"] = ps.SSHKey
+	} else {
+		delete(p.uiSettings, "ssh_key")
 	}
 	p.mu.Unlock()
-	hostLog("info", "settings updated", map[string]any{})
+	hostLog("info", "settings updated", map[string]any{"cleared": body.Clear})
 	return nil
 }
 

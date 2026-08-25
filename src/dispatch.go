@@ -103,17 +103,25 @@ const (
 func handleManagementRegister() ([]byte, error) {
 	return okEnvelope(pluginapi.ManagementRegistrationResponse{
 		Routes: []pluginapi.ManagementRoute{
-			{Method: http.MethodGet, Path: managementBasePath + "/status"},
-			{Method: http.MethodGet, Path: managementBasePath + "/history"},
-			{Method: http.MethodPost, Path: managementBasePath + "/probe"},
 			{Method: http.MethodGet, Path: managementBasePath + "/settings"},
 			{Method: http.MethodPost, Path: managementBasePath + "/settings"},
+			{Method: http.MethodPost, Path: managementBasePath + "/probe"},
 		},
 		Resources: []pluginapi.ResourceRoute{
 			{
 				Path:        "/status",
 				Menu:        "Vast Cluster Bench",
 				Description: "Live benchmark and GPU telemetry of the Vast.ai cluster.",
+			},
+			{
+				Path:        "/data",
+				Menu:        "",
+				Description: "JSON snapshot of the live cluster state (unauthenticated).",
+			},
+			{
+				Path:        "/history",
+				Menu:        "",
+				Description: "JSON probe history for one node (unauthenticated).",
 			},
 		},
 	})
@@ -143,8 +151,16 @@ func handleManagement(raw []byte) ([]byte, error) {
 	path, isResource := normalizeManagementPath(req.Path)
 
 	if isResource {
+		// Resource routes are not management-authenticated: serve the
+		// dashboard shell, the live JSON snapshot, and per-node history.
 		if req.Method == http.MethodGet && (path == "/status" || path == "/") {
 			return htmlResponse(statusPageHTML)
+		}
+		if req.Method == http.MethodGet && path == "/data" {
+			return jsonResponse(http.StatusOK, buildStatus())
+		}
+		if req.Method == http.MethodGet && path == "/history" {
+			return handleHistory(req)
 		}
 		return jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -199,4 +215,5 @@ var errUnknownSettings = errors.New("unknown settings")
 type settingsUpdateBody struct {
 	VastAPIKey string `json:"vast_api_key"`
 	SSHKey     string `json:"ssh_key"`
+	Clear      bool   `json:"clear"`
 }
