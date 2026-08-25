@@ -11,7 +11,7 @@ import sys
 import zipfile
 
 PLUGIN_ID = "vast-cluster-bench"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 _THIS = os.path.abspath(__file__)           # .../cpa-plugin-vast-cluster-bench/.github/scripts/package_local.py
 HERE = os.path.dirname(os.path.dirname(os.path.dirname(_THIS)))  # repo root
 DIST = os.path.join(HERE, "dist")

@@ -98,9 +98,13 @@ func probeAll() {
 	}
 
 	// Tunnel-discovered nodes (they carry live SSH host/port from the tunnel).
+	// Skip any whose instance id is already covered by a config node (G/F/I).
 	tunnelNodes := p.discoverTunnelNodes()
 	tunnelByName := make(map[string]NodeConfig)
 	for _, n := range tunnelNodes {
+		if _, covered := cfgByID[n.ID]; covered {
+			continue
+		}
 		tunnelByName[n.Name] = n
 		if _, exists := all[n.Name]; !exists {
 			all[n.Name] = n
