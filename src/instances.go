@@ -9,13 +9,14 @@ import (
 )
 
 // tunnelInstance is one parsed row from vast-tunnel's instances.txt.
-// Format: LOCAL_PORT SSH_HOST SSH_PORT INSTANCE_ID PRICE
+// Format: LOCAL_PORT SSH_HOST SSH_PORT INSTANCE_ID PRICE [MODEL]
 type tunnelInstance struct {
 	LocalPort  int
 	Host       string
 	SSHPort    int
 	InstanceID string
 	Price      float64
+	Model      string
 }
 
 // instancesTxtPath returns the tunnel-managed instances.txt path
@@ -66,6 +67,9 @@ func (p *pool) discoverTunnelNodes() []NodeConfig {
 			if len(parts) >= 5 {
 				rec.Price, _ = strconv.ParseFloat(parts[4], 64)
 			}
+			if len(parts) >= 6 {
+				rec.Model = parts[5]
+			}
 		} else {
 			// Legacy: SSH_HOST SSH_PORT INSTANCE_ID [PRICE]
 			rec.Host = parts[0]
@@ -92,6 +96,7 @@ func (p *pool) discoverTunnelNodes() []NodeConfig {
 			SSHHost:   rec.Host,
 			SSHPort:   rec.SSHPort,
 			LocalPort: rec.LocalPort,
+			Model:     rec.Model,
 		})
 	}
 	if len(out) > 0 {

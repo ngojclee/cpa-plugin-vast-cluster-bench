@@ -104,6 +104,12 @@ def probe_engine(p, key):
                 e["engine"] = "vllm"
                 e["kv_cache_tokens"] = mval(lines, "kv_cache_size_tokens")
                 e["kv_usage"] = mval(lines, "kv_cache_usage_perc")
+                # vLLM 0.27.x chỉ expose kv_cache_usage_perc (không có
+                # kv_cache_pool_tokens). Ước lượng tokens từ capacity cấu hình.
+                if e.get("kv_cache_tokens") is None and e.get("kv_usage") is not None:
+                    cap_ = float(os.environ.get("CB_KV_CAPACITY") or 0)
+                    if cap_ > 0:
+                        e["kv_cache_tokens"] = round(e["kv_usage"] * cap_)
                 e["queue"] = mval(lines, "num_requests_waiting")
                 e["num_running"] = mval(lines, "num_requests_running")
                 e["requests_total"] = mval(lines, "num_requests_total", "requests_total")
@@ -289,7 +295,7 @@ type gpuTelemetry struct {
 // sshProbe connects to one node over SSH and runs the remote probe script.
 // It tries direct host:port first, then the proxy host:port (both from the
 // Vast API / config). keyPath == "" means the PEM is passed inline as keyPEM.
-func sshProbe(host string, port int, user, keyPath, keyPEM string, timeout time.Duration) (*probeResult, error) {
+func sshProbe(host string, port int, user, keyPath, keyPEM string, timeout time.Duration, kvCapacity int64) (*probeResult, error) {
 	if host == "" || port == 0 {
 		return nil, fmt.Errorf("no ssh endpoint for node")
 	}
@@ -333,7 +339,11 @@ func sshProbe(host string, port int, user, keyPath, keyPEM string, timeout time.
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
 	session.Stderr = &stderr
-	if errRun := session.Run("python3 -c " + shellQuote(remoteProbeScript)); errRun != nil {
+	envPrefix := ""
+	if kvCapacity > 0 {
+		envPrefix = fmt.Sprintf("CB_KV_CAPACITY=%d ", kvCapacity)
+	}
+	if errRun := session.Run(envPrefix + "python3 -c " + shellQuote(remoteProbeScript)); errRun != nil {
 		return nil, fmt.Errorf("ssh run: %w (stderr: %s)", errRun, truncate(stderr.String(), 300))
 	}
 

@@ -199,7 +199,7 @@ func probeNode(p *pool, name string, cfg NodeConfig, byID map[string]VastInstanc
 		}
 	}
 
-	res, errProbe := sshProbe(host, port, p.cfg.User(), keyPath, keyPEM, p.cfg.Interval())
+	res, errProbe := sshProbe(host, port, p.cfg.User(), keyPath, keyPEM, p.cfg.Interval(), cfg.KVCapacity)
 	if errProbe != nil {
 		p.setNodeResult(name, &HistoryPoint{
 			Reachable: false,

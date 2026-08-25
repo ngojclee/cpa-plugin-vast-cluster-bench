@@ -17,6 +17,13 @@ type NodeConfig struct {
 	DirectHost string `yaml:"direct-host" json:"direct_host"`
 	DirectPort int    `yaml:"direct-port" json:"direct_port"`
 	LocalPort  int    `yaml:"-" json:"-"`
+	// Model is the model this node serves (multi-model routing; also shown
+	// in the dashboard). Auto-discovered from instances.txt column 6 when set.
+	Model string `yaml:"model" json:"model"`
+	// KVCapacity is the node's KV cache size in tokens (e.g. 380108).
+	// Used to render KV usage as tokens because vLLM 0.27.x only exposes
+	// kv_cache_usage_perc (no kv_cache_pool_tokens metric).
+	KVCapacity int64 `yaml:"kv-capacity" json:"kv_capacity"`
 }
 
 // Settings holds all plugin configuration.
