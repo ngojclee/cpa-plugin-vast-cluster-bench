@@ -1,0 +1,299 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+// remoteProbeScript is executed on each Vast node over SSH (python3 -c).
+// It auto-detects the LLM engine port, API key from the running server
+// cmdline, measures TTFT + decode throughput with a real streaming request,
+// reads KV/cache metrics, and samples per-GPU telemetry. It prints one JSON
+// object on stdout, prefixed with "PROBE_JSON=".
+const remoteProbeScript = `
+import json, os, re, subprocess, time, urllib.request
+
+def get(url, timeout=5, key=None):
+    hdrs = {"User-Agent": "cluster-bench"}
+    if key:
+        hdrs["Authorization"] = "Bearer " + key
+    req = urllib.request.Request(url, headers=hdrs)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+HUB_KEY = os.environ.get("CB_API_KEY", "")
+
+def autodetect_key():
+    found = []
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                raw = f.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+        except Exception:
+            continue
+        m = re.search(r"--api-key\s+([A-Za-z0-9]{16,})", raw)
+        if m:
+            t = m.group(1)
+            if t not in found:
+                found.append(t)
+    return found
+
+def key_candidates():
+    cands = []
+    if HUB_KEY:
+        cands.append(HUB_KEY)
+    for k in autodetect_key():
+        if k not in cands:
+            cands.append(k)
+    cands.append(None)
+    return cands
+
+out = {"port": None, "model": None, "engine": None, "auth": None}
+CB_KEY = None
+for p in (18000, 30000, 8000, 18080, 8001):
+    for key in key_candidates():
+        try:
+            m = get("http://127.0.0.1:%d/v1/models" % p, timeout=4, key=key)
+            d = json.loads(m)
+            models = d.get("data") or []
+            if models:
+                out["model"] = models[0].get("id") or models[0].get("name")
+                out["port"] = p
+                CB_KEY = key
+                out["auth"] = "key" if key else "none"
+                break
+        except Exception:
+            continue
+    if out["port"]:
+        break
+
+if out["port"]:
+    p = out["port"]
+    try:
+        m = get("http://127.0.0.1:%d/metrics" % p, timeout=8, key=CB_KEY)
+        lines = [l for l in m.splitlines() if l and not l.startswith("#")]
+        def mval(*pats):
+            for line in lines:
+                parts = line.rsplit(" ", 1)
+                if len(parts) != 2:
+                    continue
+                name = parts[0].split("{")[0]
+                for pat in pats:
+                    if pat in name:
+                        try:
+                            return float(parts[1])
+                        except Exception:
+                            pass
+            return None
+        if "sglang" in m:
+            out["engine"] = "sglang"
+            out["kv_cache_tokens"] = mval("kv_cache_pool_tokens", "num_gpu_blocks")
+            out["kv_usage"] = mval("token_usage")
+            out["queue"] = mval("num_queue")
+            out["num_running"] = mval("num_running")
+        else:
+            out["engine"] = "vllm"
+            out["kv_cache_tokens"] = mval("kv_cache_size_tokens")
+            out["kv_usage"] = mval("kv_cache_usage_perc")
+            out["queue"] = mval("num_requests_waiting")
+            out["num_running"] = mval("num_requests_running")
+    except Exception as e:
+        out["metrics_error"] = str(e)[:200]
+
+    # Real streaming request: TTFT + decode tok/s.
+    payload = {
+        "model": out["model"],
+        "messages": [{"role": "user", "content": "Say the word: probe. Then count 1,2,3."}],
+        "max_tokens": 64,
+        "stream": True,
+        "temperature": 0.0,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "stream_options": {"include_usage": True},
+    }
+    hdrs = {"Content-Type": "application/json"}
+    if CB_KEY:
+        hdrs["Authorization"] = "Bearer " + CB_KEY
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/v1/chat/completions" % p,
+            data=json.dumps(payload).encode(),
+            headers=hdrs,
+        )
+        t0 = time.time()
+        ttft = None
+        ntok = 0
+        usage_tokens = None
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            for line in resp:
+                s = line.decode("utf-8", "replace").strip()
+                if not s.startswith("data: "):
+                    continue
+                if s == "data: [DONE]":
+                    break
+                try:
+                    chunk = json.loads(s[6:])
+                except Exception:
+                    continue
+                if ttft is None and chunk.get("choices"):
+                    ttft = time.time() - t0
+                if chunk.get("usage"):
+                    usage_tokens = chunk["usage"].get("completion_tokens")
+                for ch in chunk.get("choices", []):
+                    d = ch.get("delta") or {}
+                    if d.get("content") or d.get("reasoning_content"):
+                        ntok += 1
+        total = time.time() - t0
+        out["ttft_s"] = round(ttft, 4) if ttft is not None else None
+        if usage_tokens:
+            ntok = usage_tokens
+        out["probe_tokens"] = int(ntok)
+        if total > 0 and ttft is not None and total > ttft:
+            out["decode_tok_s"] = round(ntok / (total - ttft), 1)
+        else:
+            out["decode_tok_s"] = round(ntok / total, 1) if total > 0 else None
+        out["probe_total_s"] = round(total, 2)
+    except Exception as e:
+        out["probe_error"] = str(e)[:200]
+
+# GPU telemetry (per-card).
+gpus = []
+try:
+    s = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,name,temperature.gpu,power.draw,memory.used,memory.total,utilization.gpu",
+         "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=10,
+    )
+    for line in s.stdout.strip().splitlines():
+        c = [x.strip() for x in line.split(",")]
+        if len(c) >= 7:
+            gpus.append({
+                "idx": int(c[0] or 0),
+                "name": c[1],
+                "temp_c": float(c[2] or 0),
+                "w": float(c[3] or 0),
+                "mem_mib": float(c[4] or 0),
+                "mem_total_mib": float(c[5] or 0),
+                "util_pct": float(c[6] or 0),
+            })
+except Exception:
+    pass
+out["gpus"] = gpus
+
+print("PROBE_JSON=" + json.dumps(out))
+`
+
+// probeResult is the parsed remote probe output.
+type probeResult struct {
+	Port         *int           `json:"port"`
+	Model        string         `json:"model"`
+	Engine       string         `json:"engine"`
+	Auth         string         `json:"auth"`
+	KVTokens     *float64       `json:"kv_cache_tokens"`
+	KVUsage      *float64       `json:"kv_usage"`
+	Queue        *float64       `json:"queue"`
+	NumRunning   *float64       `json:"num_running"`
+	MetricsError string         `json:"metrics_error"`
+	TTFTS        *float64       `json:"ttft_s"`
+	ProbeTokens  int            `json:"probe_tokens"`
+	DecodeTokS   *float64       `json:"decode_tok_s"`
+	ProbeTotalS  *float64       `json:"probe_total_s"`
+	ProbeError   string         `json:"probe_error"`
+	GPUs         []gpuTelemetry `json:"gpus"`
+}
+
+type gpuTelemetry struct {
+	Idx         int     `json:"idx"`
+	Name        string  `json:"name"`
+	TempC       float64 `json:"temp_c"`
+	W           float64 `json:"w"`
+	MemMiB      float64 `json:"mem_mib"`
+	MemTotalMiB float64 `json:"mem_total_mib"`
+	UtilPct     float64 `json:"util_pct"`
+}
+
+// sshProbe connects to one node over SSH and runs the remote probe script.
+// It tries direct host:port first, then the proxy host:port (both from the
+// Vast API / config). keyPath == "" means the PEM is passed inline as keyPEM.
+func sshProbe(host string, port int, user, keyPath, keyPEM string, timeout time.Duration) (*probeResult, error) {
+	if host == "" || port == 0 {
+		return nil, fmt.Errorf("no ssh endpoint for node")
+	}
+	var auth ssh.AuthMethod
+	if keyPEM != "" {
+		signer, errSigner := ssh.ParsePrivateKey([]byte(keyPEM))
+		if errSigner != nil {
+			return nil, fmt.Errorf("parse inline key: %w", errSigner)
+		}
+		auth = ssh.PublicKeys(signer)
+	} else {
+		raw, errRead := os.ReadFile(keyPath)
+		if errRead != nil {
+			return nil, fmt.Errorf("read ssh key %s: %w", keyPath, errRead)
+		}
+		signer, errSigner := ssh.ParsePrivateKey(raw)
+		if errSigner != nil {
+			return nil, fmt.Errorf("parse ssh key %s: %w", keyPath, errSigner)
+		}
+		auth = ssh.PublicKeys(signer)
+	}
+
+	cfg := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{auth},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Vast nodes rotate; key auth is the trust anchor.
+		Timeout:         15 * time.Second,
+	}
+	client, errDial := ssh.Dial("tcp", fmt.Sprintf("%s:%d", host, port), cfg)
+	if errDial != nil {
+		return nil, errDial
+	}
+	defer client.Close()
+
+	session, errNew := client.NewSession()
+	if errNew != nil {
+		return nil, errNew
+	}
+	defer session.Close()
+
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	if errRun := session.Run("python3 -c " + shellQuote(remoteProbeScript)); errRun != nil {
+		return nil, fmt.Errorf("ssh run: %w (stderr: %s)", errRun, truncate(stderr.String(), 300))
+	}
+
+	// Parse the last PROBE_JSON= line.
+	last := ""
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if strings.HasPrefix(line, "PROBE_JSON=") {
+			last = strings.TrimPrefix(line, "PROBE_JSON=")
+		}
+	}
+	if last == "" {
+		return nil, fmt.Errorf("no PROBE_JSON in output (stderr: %s)", truncate(stderr.String(), 300))
+	}
+	var res probeResult
+	if errJSON := json.Unmarshal([]byte(last), &res); errJSON != nil {
+		return nil, fmt.Errorf("parse probe json: %w", errJSON)
+	}
+	return &res, nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "vast-cluster-bench",
+      "name": "Vast Cluster Bench",
+      "description": "Live benchmark dashboard for Vast.ai GPU clusters: real TTFT/tok-s/KV/GPU telemetry per node, right inside CPA.",
+      "author": "ngojclee",
+      "version": "0.1.0",
+      "repository": "https://github.com/ngojclee/cpa-plugin-vast-cluster-bench",
+      "homepage": "https://github.com/ngojclee/cpa-plugin-vast-cluster-bench",
+      "license": "MIT",
+      "tags": [
+        "Management",
+        "Benchmark",
+        "Vast.ai",
+        "GPU",
+        "Dashboard"
+      ]
+    }
+  ]
+}
