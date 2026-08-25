@@ -127,6 +127,28 @@ func decodeSettings(configYAML []byte) Settings {
 			}
 		}
 	}
+	// Robustness: if the lifecycle config_yaml did not carry our block (some
+	// CPA versions send a trimmed payload), read the mounted config file
+	// directly (same file the host uses: /CLIProxyAPI/config.yaml).
+	if len(out.Nodes) == 0 || out.ProbeInterval == "" {
+		if cfg, ok := decodeConfigFile(); ok {
+			if len(cfg.Nodes) > 0 {
+				out.Nodes = cfg.Nodes
+			}
+			if cfg.ProbeInterval != "" {
+				out.ProbeInterval = cfg.ProbeInterval
+			}
+			if cfg.HistoryDays > 0 {
+				out.HistoryDays = cfg.HistoryDays
+			}
+			if cfg.SSHUser != "" {
+				out.SSHUser = cfg.SSHUser
+			}
+			if cfg.TunnelDir != "" {
+				out.TunnelDir = cfg.TunnelDir
+			}
+		}
+	}
 	if out.ProbeInterval != "" {
 		if d, errParse := time.ParseDuration(out.ProbeInterval); errParse == nil {
 			out.interval = d
@@ -136,4 +158,39 @@ func decodeSettings(configYAML []byte) Settings {
 		out.HistoryDays = 7
 	}
 	return out
+}
+
+// decodeConfigFile reads the CPA config file from the container mount and
+// extracts the plugin block. Paths tried: env CPA_CONFIG_PATH, the standard
+// mount /CLIProxyAPI/config.yaml, and the cpa-config-path convention.
+func decodeConfigFile() (Settings, bool) {
+	candidates := []string{
+		os.Getenv("CPA_CONFIG_PATH"),
+		"/CLIProxyAPI/config.yaml",
+		"/cpa-config.yaml",
+	}
+	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
+		raw, errRead := os.ReadFile(path)
+		if errRead != nil {
+			continue
+		}
+		var root struct {
+			Plugins *struct {
+				Configs map[string]Settings `yaml:"configs"`
+			} `yaml:"plugins"`
+		}
+		if errYAML := yaml.Unmarshal(raw, &root); errYAML != nil {
+			continue
+		}
+		if root.Plugins != nil {
+			if cfg, ok := root.Plugins.Configs["vast-cluster-bench"]; ok {
+				hostLog("info", "config read from file", map[string]any{"path": path, "nodes": len(cfg.Nodes)})
+				return cfg, true
+			}
+		}
+	}
+	return Settings{}, false
 }

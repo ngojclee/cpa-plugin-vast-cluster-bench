@@ -86,10 +86,14 @@ func probeAll() {
 
 	// Build final node set.
 	all := make(map[string]NodeConfig)
-	usedNames := make(map[string]string) // name -> instance id (disambiguate)
+	usedNames := make(map[string]string)  // name -> instance id (disambiguate)
+	cfgByID := make(map[string]string)    // config instance id -> name (skip dup)
 	for name, cfg := range configByName {
 		all[name] = cfg
 		usedNames[name] = cfg.ID
+		if cfg.ID != "" {
+			cfgByID[cfg.ID] = name
+		}
 	}
 
 	// Tunnel-discovered nodes (they carry live SSH host/port from the tunnel).
@@ -108,21 +112,27 @@ func probeAll() {
 
 	// Vast API instances not already known (auto-discover new machines).
 	// Multiple instances can share one template name; disambiguate with #ID.
+	// Instances whose id is already covered by a config node are skipped so
+	// the prettier config name (G/F/I) is used instead of the template name.
 	for _, inst := range instances {
+		id := inst.IDString()
+		if _, covered := cfgByID[id]; covered {
+			continue
+		}
 		base := instanceName(&inst)
 		name := base
-		if prevID, ok := usedNames[name]; ok && prevID != inst.IDString() {
-			name = base + " #" + inst.IDString()
+		if prevID, ok := usedNames[name]; ok && prevID != id {
+			name = base + " #" + id
 		}
 		if _, exists := all[name]; exists {
 			continue
 		}
-		usedNames[name] = inst.IDString()
+		usedNames[name] = id
 		// prefer tunnel endpoint if we have one for this id
 		if tc, ok := tunnelByName[name]; ok {
 			all[name] = tc
 		} else {
-			cfg := NodeConfig{Name: name, ID: inst.IDString()}
+			cfg := NodeConfig{Name: name, ID: id}
 			if inst.PublicIP != "" && inst.DirectPort > 0 {
 				cfg.SSHHost, cfg.SSHPort = inst.PublicIP, inst.DirectPort
 			} else if inst.SSHHost != "" {
