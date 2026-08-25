@@ -79,19 +79,26 @@ func probeAll() {
 		byID[inst.IDString()] = inst
 	}
 
-	// Union of names: configured + discovered (use template name or id as name).
+	// Union of names: configured + discovered. Use a stable unique name per
+	// instance: config name wins; otherwise template name, disambiguated by
+	// instance id when two machines share the same template name.
 	discovered := make(map[string]VastInstance)
+	usedNames := make(map[string]string) // name -> instance id
+	for name := range configByName {
+		usedNames[name] = configByName[name].ID
+	}
 	for _, inst := range instances {
-		name := instanceName(&inst)
+		base := instanceName(&inst)
+		name := base
+		if prevID, ok := usedNames[name]; ok && prevID != inst.IDString() {
+			name = base + " #" + inst.IDString()
+		}
+		usedNames[name] = inst.IDString()
 		if _, exists := configByName[name]; !exists {
 			discovered[name] = inst
 			if _, ok := p.nodes[name]; !ok {
 				p.nodes[name] = &NodeState{}
 			}
-		}
-		// Also index by id.
-		if _, ok := p.nodes[inst.IDString()]; !ok {
-			// keep node state keyed by name only
 		}
 	}
 
