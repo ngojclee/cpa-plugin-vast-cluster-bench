@@ -10,7 +10,7 @@ import (
 
 // VastInstance is the subset of the Vast.ai API instance object we need.
 type VastInstance struct {
-	ID            string         `json:"id"`
+	ID            json.Number    `json:"id"`
 	ActualStatus  string         `json:"actual_status"`
 	CurState      string         `json:"cur_state"`
 	IntendedState string         `json:"intended_status"`
@@ -31,6 +31,10 @@ type VastInstance struct {
 	StatusMsg     string         `json:"status_msg"`
 	StartDate     int64          `json:"start_date"`
 	Duration      float64        `json:"duration"`
+}
+
+func (i *VastInstance) IDString() string {
+	return i.ID.String()
 }
 
 type vastAPIResponse struct {

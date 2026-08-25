@@ -76,7 +76,7 @@ func probeAll() {
 	// Map instance id -> instance.
 	byID := make(map[string]VastInstance)
 	for _, inst := range instances {
-		byID[inst.ID] = inst
+		byID[inst.IDString()] = inst
 	}
 
 	// Union of names: configured + discovered (use template name or id as name).
@@ -90,7 +90,7 @@ func probeAll() {
 			}
 		}
 		// Also index by id.
-		if _, ok := p.nodes[inst.ID]; !ok {
+		if _, ok := p.nodes[inst.IDString()]; !ok {
 			// keep node state keyed by name only
 		}
 	}
@@ -124,7 +124,7 @@ func instanceName(inst *VastInstance) string {
 	if inst.TemplateName != "" {
 		return inst.TemplateName
 	}
-	return inst.ID
+	return inst.IDString()
 }
 
 func probeNode(p *pool, name string, configByName map[string]NodeConfig, byID map[string]VastInstance, discovered map[string]VastInstance) {
@@ -212,7 +212,7 @@ func vastMapIf(ok bool, inst *VastInstance) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":            inst.ID,
+		"id":            inst.IDString(),
 		"status":        inst.ActualStatus,
 		"public_ip":     inst.PublicIP,
 		"ssh_host":      inst.SSHHost,
