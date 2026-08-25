@@ -100,12 +100,18 @@ if out["port"]:
             out["queue"] = mval("num_queue")
             out["num_running"] = mval("num_running")
             out["cache_hit"] = mval("cache_hit_rate")
+            out["requests_total"] = mval("num_total_requests", "requests_total")
+            out["prompt_tokens_total"] = mval("prompt_tokens_total")
+            out["gen_tokens_total"] = mval("generation_tokens_total")
         else:
             out["engine"] = "vllm"
             out["kv_cache_tokens"] = mval("kv_cache_size_tokens")
             out["kv_usage"] = mval("kv_cache_usage_perc")
             out["queue"] = mval("num_requests_waiting")
             out["num_running"] = mval("num_requests_running")
+            out["requests_total"] = mval("num_requests_total", "requests_total")
+            out["prompt_tokens_total"] = mval("num_prompt_tokens_total", "prompt_tokens_total")
+            out["gen_tokens_total"] = mval("num_generation_tokens_total", "generation_tokens_total")
     except Exception as e:
         out["metrics_error"] = str(e)[:200]
 
@@ -236,6 +242,9 @@ type probeResult struct {
 	PrefillTokS  *float64       `json:"prefill_tok_s"`
 	ProbeTotalS  *float64       `json:"probe_total_s"`
 	CacheHit     *float64       `json:"cache_hit"`
+	RequestsTotal *float64      `json:"requests_total"`
+	PromptTokensTotal *float64  `json:"prompt_tokens_total"`
+	GenTokensTotal *float64     `json:"gen_tokens_total"`
 	ProbeError   string         `json:"probe_error"`
 	GPUs         []gpuTelemetry `json:"gpus"`
 }

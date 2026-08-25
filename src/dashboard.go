@@ -44,6 +44,9 @@ type nodeStatus struct {
 	Running     float64        `json:"running"`
 	Queue       float64        `json:"queue"`
 	CacheHit    float64        `json:"cache_hit"`
+	RequestsTotal float64      `json:"requests_total"`
+	PromptTokensTotal float64  `json:"prompt_tokens_total"`
+	GenTokensTotal float64     `json:"gen_tokens_total"`
 	ProbeTokens int            `json:"probe_tokens"`
 	PriceH      float64        `json:"price_h"`
 	GPUs        []gpuTelemetry `json:"gpus"`
@@ -96,6 +99,9 @@ func buildStatus() clusterStatus {
 			entry.Running = st.last.Running
 			entry.Queue = st.last.Queue
 			entry.CacheHit = st.last.CacheHit
+			entry.RequestsTotal = st.last.RequestsTotal
+			entry.PromptTokensTotal = st.last.PromptTokensTotal
+			entry.GenTokensTotal = st.last.GenTokensTotal
 			entry.ProbeTokens = st.last.ProbeTokens
 			entry.PriceH = st.last.PriceH
 		}

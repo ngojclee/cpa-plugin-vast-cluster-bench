@@ -24,6 +24,9 @@ type HistoryPoint struct {
 	Running      float64 `json:"running,omitempty"`
 	Queue        float64 `json:"queue,omitempty"`
 	CacheHit     float64 `json:"cache_hit,omitempty"`
+	RequestsTotal float64 `json:"requests_total,omitempty"`
+	PromptTokensTotal float64 `json:"prompt_tokens_total,omitempty"`
+	GenTokensTotal float64 `json:"gen_tokens_total,omitempty"`
 	ProbeTokens  int     `json:"probe_tokens,omitempty"`
 	Status       string  `json:"status"`
 	PriceH       float64 `json:"price_h,omitempty"`

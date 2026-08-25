@@ -140,7 +140,8 @@ async function load() {
         + '<td>' + fmtNum(n.prefill_tok_s, 0) + ' tok/s</td>'
         + '<td>' + fmtNum(n.kv_cache_tokens / 1000, 0) + 'K · ' + usageBar(n.kv_usage) + '<br><span class="muted">run ' + fmtNum(n.running, 0) + ' · q ' + fmtNum(n.queue, 0) + '</span></td>'
         + '<td>' + (gpu || '<span class="muted">—</span>') + host + '</td>'
-        + '<td>' + (n.price_h ? '$' + n.price_h.toFixed(3) + '/h' : '—') + '</td>'
+        + '<td>' + (n.price_h ? '$' + n.price_h.toFixed(3) + '/h' : '—')
+        + (n.requests_total > 0 ? '<br><span class="muted">' + fmtNum(n.requests_total, 0) + ' req · ' + fmtNum((n.prompt_tokens_total + n.gen_tokens_total) / 1e6, 1) + 'M tok</span>' : '') + '</td>'
         + '<td>' + spark(hist) + '</td></tr>';
     }
     html += '</table>';

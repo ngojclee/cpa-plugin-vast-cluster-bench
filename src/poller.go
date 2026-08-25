@@ -219,6 +219,9 @@ func probeNode(p *pool, name string, cfg NodeConfig, byID map[string]VastInstanc
 		Running:     derefF(res.NumRunning),
 		Queue:       derefF(res.Queue),
 		CacheHit:    derefF(res.CacheHit),
+		RequestsTotal: derefF(res.RequestsTotal),
+		PromptTokensTotal: derefF(res.PromptTokensTotal),
+		GenTokensTotal: derefF(res.GenTokensTotal),
 		ProbeTokens: res.ProbeTokens,
 		Status:      "ok",
 	}
