@@ -110,7 +110,21 @@ func decodeSettings(configYAML []byte) Settings {
 	}
 	if root.Plugins != nil {
 		if cfg, ok := root.Plugins.Configs["vast-cluster-bench"]; ok {
+			// Merge instead of replace: YAML config only overrides fields it
+			// actually sets, so defaults survive when keys are omitted.
 			out = cfg
+			if cfg.ProbeInterval == "" {
+				out.ProbeInterval = "5m"
+			}
+			if cfg.HistoryDays <= 0 {
+				out.HistoryDays = 7
+			}
+			if cfg.SSHUser == "" {
+				out.SSHUser = "root"
+			}
+			if cfg.TunnelDir != "" {
+				out.TunnelDir = cfg.TunnelDir
+			}
 		}
 	}
 	if out.ProbeInterval != "" {

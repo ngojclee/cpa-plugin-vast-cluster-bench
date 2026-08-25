@@ -86,8 +86,10 @@ func probeAll() {
 
 	// Build final node set.
 	all := make(map[string]NodeConfig)
+	usedNames := make(map[string]string) // name -> instance id (disambiguate)
 	for name, cfg := range configByName {
 		all[name] = cfg
+		usedNames[name] = cfg.ID
 	}
 
 	// Tunnel-discovered nodes (they carry live SSH host/port from the tunnel).
@@ -97,6 +99,7 @@ func probeAll() {
 		tunnelByName[n.Name] = n
 		if _, exists := all[n.Name]; !exists {
 			all[n.Name] = n
+			usedNames[n.Name] = n.ID
 			if _, ok := p.nodes[n.Name]; !ok {
 				p.nodes[n.Name] = &NodeState{}
 			}
@@ -104,11 +107,17 @@ func probeAll() {
 	}
 
 	// Vast API instances not already known (auto-discover new machines).
+	// Multiple instances can share one template name; disambiguate with #ID.
 	for _, inst := range instances {
-		name := instanceName(&inst)
+		base := instanceName(&inst)
+		name := base
+		if prevID, ok := usedNames[name]; ok && prevID != inst.IDString() {
+			name = base + " #" + inst.IDString()
+		}
 		if _, exists := all[name]; exists {
 			continue
 		}
+		usedNames[name] = inst.IDString()
 		// prefer tunnel endpoint if we have one for this id
 		if tc, ok := tunnelByName[name]; ok {
 			all[name] = tc
