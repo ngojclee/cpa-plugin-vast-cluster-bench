@@ -84,6 +84,8 @@ func pluginRegistration() registration {
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "probe-interval", Type: pluginapi.ConfigFieldTypeString, Description: "Interval between live probes (default 5m)."},
 				{Name: "vast-api-key", Type: pluginapi.ConfigFieldTypeString, Description: "Vast.ai API key. Falls back to env VAST_API_KEY."},
+				{Name: "tunnel-dir", Type: pluginapi.ConfigFieldTypeString, Description: "Tunnel directory (instances.txt + ssh/id_ed25519). Default /vast-tunnel."},
+				{Name: "history-days", Type: pluginapi.ConfigFieldTypeString, Description: "Keep probe history N days, auto-prune (default 7)."},
 				{Name: "ssh-key-path", Type: pluginapi.ConfigFieldTypeString, Description: "Path to the SSH private key used to reach Vast nodes (default /vast-ssh/id_ed25519)."},
 				{Name: "ssh-user", Type: pluginapi.ConfigFieldTypeString, Description: "SSH user on Vast nodes (default root)."},
 				{Name: "nodes", Type: pluginapi.ConfigFieldTypeArray, Description: "Optional explicit node list: name, id, ssh-host, ssh-port, direct-host, direct-port. Empty = auto-discover from Vast API."},

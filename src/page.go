@@ -50,42 +50,12 @@ th { font-weight: 600; white-space: nowrap; }
 <h1>⚡ Vast Cluster Bench</h1>
 <div class="sub" id="meta">Đang tải…</div>
 
-<div class="card" id="config-card">
+<div class="card">
   <div class="toolbar">
     <button id="probe" class="primary">⚡ Probe now</button>
     <button id="refresh" title="Làm mới">⟳</button>
-    <button id="config-toggle">⚙ Keys &amp; Cấu hình</button>
     <span class="muted" id="keysaved"></span>
   </div>
-  <div id="config-fields" style="display:none">
-    <div class="row">
-      <div>
-        <label>Vast API Key
-          <input type="password" id="vastkey" placeholder="••••••••" autocomplete="off">
-          <span class="hint">Để trống + Lưu = dùng env <code>VAST_API_KEY</code>.</span>
-        </label>
-      </div>
-      <div>
-        <label>SSH Private Key
-          <input type="password" id="sshkey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" autocomplete="off">
-          <span class="hint">Để trống + Lưu = dùng <code>tunnel-dir/ssh/id_ed25519</code>.</span>
-        </label>
-      </div>
-      <div>
-        <label>Management Key
-          <input type="password" id="mkey" placeholder="management key" autocomplete="off">
-          <span class="hint">Chỉ cần khi Lưu / Probe. Xem dashboard không cần.</span>
-        </label>
-      </div>
-    </div>
-    <div class="toolbar" style="margin-top:8px; margin-bottom:0">
-      <button id="savekeys" class="primary">Lưu keys</button>
-      <button id="clearkeys">Bỏ keys (dùng env/path)</button>
-    </div>
-  </div>
-</div>
-
-<div class="card">
   <div id="error"></div>
   <div id="content" class="muted">Đang tải dữ liệu…</div>
 </div>
@@ -167,34 +137,15 @@ function spark(points) {
 }
 async function probeNow() {
   showError('');
-  if (!mkey()) { showError('Cần management key để Probe now (nhập ở ⚙ Cấu hình).'); return; }
+  if (!mkey()) { showError('Cần management key để Probe now (mở trang quản trị CPA và cấu hình ở Plugins → Configure).'); return; }
   try {
     await api(MGT + '/probe', { method: 'POST', headers: mgmtHeaders(), body: '{}' });
     $('#keysaved').textContent = '⚡ probe đang chạy…';
     setTimeout(load, 4000);
   } catch (e) { showError('Sai management key? HTTP ' + e.message.replace('HTTP ', '')); }
 }
-async function saveKeys(clear) {
-  showError('');
-  if (!mkey()) { showError('Cần management key để lưu (nhập ở ô Management Key).'); return; }
-  const body = clear
-    ? { vast_api_key: '', ssh_key: '', clear: true }
-    : { vast_api_key: $('#vastkey').value.trim(), ssh_key: $('#sshkey').value.trim() };
-  try {
-    await api(MGT + '/settings', { method: 'POST', headers: mgmtHeaders(), body: JSON.stringify(body) });
-    $('#keysaved').textContent = clear ? '✓ đã bỏ keys — dùng env VAST_API_KEY / ssh-key-path' : '✓ đã lưu';
-    $('#vastkey').value = ''; $('#sshkey').value = '';
-    setTimeout(() => { $('#keysaved').textContent = ''; }, 3500);
-  } catch (e) { showError('Sai management key? HTTP ' + e.message.replace('HTTP ', '')); }
-}
 $('#probe').addEventListener('click', probeNow);
 $('#refresh').addEventListener('click', load);
-$('#config-toggle').addEventListener('click', () => {
-  const el = $('#config-fields');
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
-});
-$('#savekeys').addEventListener('click', () => saveKeys(false));
-$('#clearkeys').addEventListener('click', () => saveKeys(true));
 load();
 setInterval(load, 15000);
 </script>
