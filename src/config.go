@@ -36,6 +36,7 @@ type Settings struct {
 	HistoryDays   int           `yaml:"history-days" json:"history_days"`
 	Nodes         []NodeConfig  `yaml:"nodes" json:"nodes"`
 	AuthDir       string        `yaml:"-" json:"-"`
+	DataDir       string        `yaml:"-" json:"-"`
 
 	interval time.Duration
 }

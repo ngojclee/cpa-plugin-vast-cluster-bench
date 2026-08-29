@@ -206,12 +206,17 @@ func (p *pool) markProbeDone() {
 }
 
 // stateDir returns the plugin's persisted state directory (settings, history).
+// Lives under the plugins dir — OUTSIDE auth-dir — so account-config-manager
+// does not mistake settings.json for an OAuth account file.
 func (p *pool) stateDir() string {
-	base := p.cfg.AuthDir
-	if base == "" {
-		base = "/root/.cli-proxy-api"
+	if p.cfg.DataDir != "" {
+		return filepath.Join(p.cfg.DataDir, pluginID)
 	}
-	return filepath.Join(base, "plugins-data", pluginID)
+	if base := os.Getenv("CPA_PLUGIN_DATA_DIR"); base != "" {
+		return filepath.Join(base, pluginID)
+	}
+	// Default: /CLIProxyAPI/plugins/plugin-data (outside /root/.cli-proxy-api).
+	return filepath.Join("/CLIProxyAPI/plugins", "plugin-data", pluginID)
 }
 
 func settingsFilePath(stateDir string) string {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
@@ -55,6 +56,7 @@ func configure(raw []byte) error {
 	}
 	cfg := decodeSettings(req.ConfigYAML)
 	cfg.AuthDir = hostAuthDir()
+	cfg.DataDir = hostPluginDataDir()
 	currentPool().reconfigure(cfg)
 	hostLog("info", "configured", map[string]any{
 		"nodes":    len(cfg.Nodes),
@@ -71,6 +73,15 @@ func hostAuthDir() string {
 		return p.cfg.AuthDir
 	}
 	return "/root/.cli-proxy-api"
+}
+
+// hostPluginDataDir resolves where the plugin may persist its own state
+// (settings, history) — OUTSIDE auth-dir so account scans never see it.
+func hostPluginDataDir() string {
+	if p := os.Getenv("CPA_PLUGIN_DATA_DIR"); p != "" {
+		return p
+	}
+	return "/CLIProxyAPI/plugins/plugin-data"
 }
 
 func pluginRegistration() registration {
